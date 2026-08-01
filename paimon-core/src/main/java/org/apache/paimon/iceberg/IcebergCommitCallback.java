@@ -625,6 +625,13 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
             return;
         }
 
+        if (formatVersion == IcebergMetadata.FORMAT_VERSION_V3
+                && baseMetadata.nextRowId() == null) {
+            // v3 base metadata written before Paimon emitted row lineage; recreate to self-heal
+            createMetadataWithoutBase(snapshot.id());
+            return;
+        }
+
         List<IcebergManifestFileMeta> baseManifestFileMetas =
                 manifestList.read(baseMetadata.currentSnapshot().manifestList());
 
@@ -768,6 +775,11 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                             .collect(Collectors.toList()));
         }
 
+        RowLineage rowLineage =
+                computeRowLineage(
+                        baseMetadata.nextRowId() == null ? 0L : baseMetadata.nextRowId(),
+                        metrics.addedRecords);
+
         List<IcebergSnapshot> snapshots = new ArrayList<>(baseMetadata.snapshots());
         snapshots.add(
                 new IcebergSnapshot(
@@ -778,8 +790,8 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                         snapshotSummary,
                         pathFactory.toManifestListPath(manifestListFileName).toString(),
                         schemaId,
-                        null,
-                        null));
+                        rowLineage.firstRowId,
+                        rowLineage.addedRows));
 
         // all snapshots in this list, except the last one, need to expire
         List<IcebergSnapshot> toExpireExceptLast = new ArrayList<>();
@@ -818,7 +830,7 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                         baseMetadata.lastPartitionId(),
                         snapshots,
                         (int) snapshotId,
-                        null,
+                        rowLineage.nextRowId,
                         refs);
 
         Path metadataPath = pathFactory.toMetadataPath(snapshotId);
