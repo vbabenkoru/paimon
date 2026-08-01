@@ -449,6 +449,7 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                                         IcebergPartitionField.FIRST_FIELD_ID - 1),
                         Collections.singletonList(snapshot),
                         (int) snapshotId,
+                        null,
                         refs);
 
         Path metadataPath = pathFactory.toMetadataPath(snapshotId);
@@ -816,6 +817,7 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                         baseMetadata.lastPartitionId(),
                         snapshots,
                         (int) snapshotId,
+                        null,
                         refs);
 
         Path metadataPath = pathFactory.toMetadataPath(snapshotId);
@@ -1272,6 +1274,7 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                             baseMetadata.lastPartitionId(),
                             baseMetadata.snapshots(),
                             baseMetadata.currentSnapshotId(),
+                            baseMetadata.nextRowId(),
                             baseMetadata.refs());
 
             /*
@@ -1330,6 +1333,7 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                             baseMetadata.lastPartitionId(),
                             baseMetadata.snapshots(),
                             baseMetadata.currentSnapshotId(),
+                            baseMetadata.nextRowId(),
                             baseMetadata.refs());
 
             /*
