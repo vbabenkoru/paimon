@@ -536,6 +536,7 @@ public class IcebergRestMetadataCommitter implements IcebergMetadataCommitter {
                                                         s.addedRows()))
                                 .collect(Collectors.toList()),
                         newIcebergMetadata.currentSnapshotId(),
+                        newIcebergMetadata.nextRowId(),
                         newIcebergMetadata.refs());
         TableMetadata shiftedTableMetadata =
                 TableMetadataParser.fromJson(shiftedForConversion.toJson());
@@ -624,6 +625,7 @@ public class IcebergRestMetadataCommitter implements IcebergMetadataCommitter {
                 newIcebergMetadata.lastPartitionId(),
                 snapshots,
                 newIcebergMetadata.currentSnapshotId(),
+                newIcebergMetadata.nextRowId(),
                 newIcebergMetadata.refs());
     }
 
