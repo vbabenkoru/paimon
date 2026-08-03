@@ -73,6 +73,6 @@ jobs:
 
           mvn --settings $tmp_settings -ntp deploy \
             -DskipTests -Dgpg.skip -Drat.skip \
-            -pl paimon-filesystems,paimon-filesystems/paimon-hadoop-shaded-3.4,paimon-filesystems/paimon-s3-impl,paimon-filesystems/paimon-s3
+            -pl paimon-filesystems/paimon-hadoop-shaded-3.4,paimon-filesystems/paimon-s3-impl,paimon-filesystems/paimon-s3
 
           rm $tmp_settings
