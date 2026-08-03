@@ -31,7 +31,7 @@ under the License.
     <artifactId>paimon-parent</artifactId>
     <groupId>org.apache.paimon</groupId>
     <name>Paimon : </name>
-    <version>2.1-SNAPSHOT</version>
+    <version>2.1.0-main-nextrowid.1</version>
     <packaging>pom</packaging>
 
     <url>https://paimon.apache.org</url>
@@ -1222,4 +1222,18 @@ under the License.
         </repository>
     </repositories>
     -->
+
+    <!-- Fork-only: publish patched builds to GitHub Packages (overrides apache parent). -->
+    <distributionManagement>
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages (vbabenkoru/paimon fork)</name>
+            <url>https://maven.pkg.github.com/vbabenkoru/paimon</url>
+        </repository>
+        <snapshotRepository>
+            <id>github</id>
+            <name>GitHub Packages (vbabenkoru/paimon fork)</name>
+            <url>https://maven.pkg.github.com/vbabenkoru/paimon</url>
+        </snapshotRepository>
+    </distributionManagement>
 </project>
