@@ -65,6 +65,6 @@ jobs:
           mvn --settings $tmp_settings -ntp clean deploy \
             -DskipTests -Dgpg.skip -Drat.skip \
             -Dflink2 -Ppaimon-iceberg \
-            -pl paimon-flink/paimon-flink-2.2,paimon-iceberg -am
+            -pl paimon-flink/paimon-flink-2.2,paimon-iceberg,paimon-filesystems/paimon-s3 -am
 
           rm $tmp_settings
