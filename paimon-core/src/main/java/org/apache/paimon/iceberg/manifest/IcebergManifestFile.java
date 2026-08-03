@@ -287,7 +287,8 @@ public class IcebergManifestFile extends ObjectsFile<IcebergManifestEntry> {
                     addedRowsCount,
                     existingRowsCount,
                     deletedRowsCount,
-                    partitionSummaries);
+                    partitionSummaries,
+                    null);
         }
 
         private boolean isNaN(@Nullable Object value) {
