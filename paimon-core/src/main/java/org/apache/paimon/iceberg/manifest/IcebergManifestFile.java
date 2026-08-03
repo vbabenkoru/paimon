@@ -30,6 +30,7 @@ import org.apache.paimon.fs.Path;
 import org.apache.paimon.iceberg.IcebergOptions;
 import org.apache.paimon.iceberg.IcebergPathFactory;
 import org.apache.paimon.iceberg.manifest.IcebergManifestFileMeta.Content;
+import org.apache.paimon.iceberg.metadata.IcebergMetadata;
 import org.apache.paimon.iceberg.metadata.IcebergPartitionSpec;
 import org.apache.paimon.io.RollingFileWriterImpl;
 import org.apache.paimon.io.SingleFileWriter;
@@ -69,6 +70,7 @@ public class IcebergManifestFile extends ObjectsFile<IcebergManifestEntry> {
     public IcebergManifestFile(
             FileIO fileIO,
             RowType partitionType,
+            boolean withFirstRowId,
             FormatReaderFactory readerFactory,
             FormatWriterFactory writerFactory,
             String compression,
@@ -76,8 +78,8 @@ public class IcebergManifestFile extends ObjectsFile<IcebergManifestEntry> {
             MemorySize targetFileSize) {
         super(
                 fileIO,
-                new IcebergManifestEntrySerializer(partitionType),
-                IcebergManifestEntry.schema(partitionType),
+                new IcebergManifestEntrySerializer(partitionType, withFirstRowId),
+                IcebergManifestEntry.schema(partitionType, withFirstRowId),
                 readerFactory,
                 writerFactory,
                 compression,
@@ -95,8 +97,10 @@ public class IcebergManifestFile extends ObjectsFile<IcebergManifestEntry> {
 
     public static IcebergManifestFile create(FileStoreTable table, IcebergPathFactory pathFactory) {
         RowType partitionType = table.schema().logicalPartitionType();
-        RowType entryType = IcebergManifestEntry.schema(partitionType);
         Options avroOptions = Options.fromMap(table.options());
+        boolean withFirstRowId =
+                avroOptions.get(IcebergOptions.FORMAT_VERSION) >= IcebergMetadata.FORMAT_VERSION_V3;
+        RowType entryType = IcebergManifestEntry.schema(partitionType, withFirstRowId);
         // https://github.com/apache/iceberg/blob/main/core/src/main/java/org/apache/iceberg/ManifestReader.java
         avroOptions.set(
                 "avro.row-name-mapping",
@@ -117,6 +121,7 @@ public class IcebergManifestFile extends ObjectsFile<IcebergManifestEntry> {
         return new IcebergManifestFile(
                 table.fileIO(),
                 partitionType,
+                withFirstRowId,
                 manifestFileAvro.createReaderFactory(entryType, entryType, new ArrayList<>()),
                 manifestFileAvro.createWriterFactory(entryType),
                 avroOptions.get(IcebergOptions.MANIFEST_COMPRESSION),
