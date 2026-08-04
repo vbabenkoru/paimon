@@ -62,17 +62,12 @@ jobs:
           echo "<password>${GITHUB_TOKEN}</password>" >> $tmp_settings
           echo "</server></servers></settings>" >> $tmp_settings
 
-          # Addendum pass: paimon-s3 and its not-yet-published reactor closure.
-          # The flink-2.2/iceberg artifacts for this version are already in the
-          # registry, and GitHub Packages rejects re-uploads of an existing
-          # version — so build dependencies locally (install -am), then deploy
-          # only the missing modules.
-          mvn --settings $tmp_settings -ntp clean install \
+          # Fresh version: publish the full closure (flink-2.2 bundle, iceberg,
+          # s3) in one pass. GitHub Packages only rejects re-uploads of an
+          # existing version, so a new version can deploy everything at once.
+          mvn --settings $tmp_settings -ntp clean deploy \
             -DskipTests -Dgpg.skip -Drat.skip \
-            -pl paimon-filesystems/paimon-s3 -am
-
-          mvn --settings $tmp_settings -ntp deploy \
-            -DskipTests -Dgpg.skip -Drat.skip \
-            -pl paimon-filesystems/paimon-hadoop-shaded-3.4,paimon-filesystems/paimon-s3-impl,paimon-filesystems/paimon-s3
+            -Dflink2 -Ppaimon-iceberg \
+            -pl paimon-flink/paimon-flink-2.2,paimon-iceberg,paimon-filesystems/paimon-s3 -am
 
           rm $tmp_settings
