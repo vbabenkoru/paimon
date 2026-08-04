@@ -22,6 +22,8 @@ import org.apache.paimon.types.DataField;
 import org.apache.paimon.types.DataTypes;
 import org.apache.paimon.types.RowType;
 
+import javax.annotation.Nullable;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -73,6 +75,10 @@ public class IcebergManifestFileMeta {
     private final long existingRowsCount;
     private final long deletedRowsCount;
     private final List<IcebergPartitionSummary> partitions;
+    // Iceberg format version 3 row lineage: the starting _row_id assigned to rows in this data
+    // manifest, see https://iceberg.apache.org/spec/#first-row-id-assignment. Null for delete
+    // manifests, for format version <= 2, and for data manifests not yet assigned an id range.
+    @Nullable private final Long firstRowId;
 
     public IcebergManifestFileMeta(
             String manifestPath,
@@ -89,6 +95,40 @@ public class IcebergManifestFileMeta {
             long existingRowsCount,
             long deletedRowsCount,
             List<IcebergPartitionSummary> partitions) {
+        this(
+                manifestPath,
+                manifestLength,
+                partitionSpecId,
+                content,
+                sequenceNumber,
+                minSequenceNumber,
+                addedSnapshotId,
+                addedFilesCount,
+                existingFilesCount,
+                deletedFilesCount,
+                addedRowsCount,
+                existingRowsCount,
+                deletedRowsCount,
+                partitions,
+                null);
+    }
+
+    public IcebergManifestFileMeta(
+            String manifestPath,
+            long manifestLength,
+            int partitionSpecId,
+            Content content,
+            long sequenceNumber,
+            long minSequenceNumber,
+            long addedSnapshotId,
+            int addedFilesCount,
+            int existingFilesCount,
+            int deletedFilesCount,
+            long addedRowsCount,
+            long existingRowsCount,
+            long deletedRowsCount,
+            List<IcebergPartitionSummary> partitions,
+            @Nullable Long firstRowId) {
         this.manifestPath = manifestPath;
         this.manifestLength = manifestLength;
         this.partitionSpecId = partitionSpecId;
@@ -103,6 +143,27 @@ public class IcebergManifestFileMeta {
         this.existingRowsCount = existingRowsCount;
         this.deletedRowsCount = deletedRowsCount;
         this.partitions = partitions;
+        this.firstRowId = firstRowId;
+    }
+
+    /** Returns a copy of this meta with the given {@code first_row_id} assigned. */
+    public IcebergManifestFileMeta withFirstRowId(@Nullable Long firstRowId) {
+        return new IcebergManifestFileMeta(
+                manifestPath,
+                manifestLength,
+                partitionSpecId,
+                content,
+                sequenceNumber,
+                minSequenceNumber,
+                addedSnapshotId,
+                addedFilesCount,
+                existingFilesCount,
+                deletedFilesCount,
+                addedRowsCount,
+                existingRowsCount,
+                deletedRowsCount,
+                partitions,
+                firstRowId);
     }
 
     public String manifestPath() {
@@ -165,6 +226,11 @@ public class IcebergManifestFileMeta {
         return partitions;
     }
 
+    @Nullable
+    public Long firstRowId() {
+        return firstRowId;
+    }
+
     public static RowType schema(boolean legacyVersion) {
         return legacyVersion ? schemaForIceberg1_4() : schemaForIcebergNew();
     }
@@ -187,6 +253,7 @@ public class IcebergManifestFileMeta {
         fields.add(
                 new DataField(
                         507, "partitions", DataTypes.ARRAY(IcebergPartitionSummary.schema())));
+        fields.add(new DataField(520, "first_row_id", DataTypes.BIGINT()));
         return new RowType(false, fields);
     }
 
@@ -235,7 +302,8 @@ public class IcebergManifestFileMeta {
                 && addedRowsCount == that.addedRowsCount
                 && existingRowsCount == that.existingRowsCount
                 && deletedRowsCount == that.deletedRowsCount
-                && Objects.equals(partitions, that.partitions);
+                && Objects.equals(partitions, that.partitions)
+                && Objects.equals(firstRowId, that.firstRowId);
     }
 
     @Override
@@ -254,6 +322,7 @@ public class IcebergManifestFileMeta {
                 addedRowsCount,
                 existingRowsCount,
                 deletedRowsCount,
-                partitions);
+                partitions,
+                firstRowId);
     }
 }
