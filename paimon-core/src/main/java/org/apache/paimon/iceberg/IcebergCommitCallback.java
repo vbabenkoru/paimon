@@ -376,6 +376,7 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
         List<IcebergManifestFileMeta> allManifestFileMetas = new ArrayList<>();
         allManifestFileMetas.addAll(dataManifestFileMetas);
         allManifestFileMetas.addAll(dvManifestFileMetas);
+        long assignedNextRowId = assignFirstRowIds(allManifestFileMetas, 0L);
 
         metrics.changedPartitionCount = changedPartitions.size();
         metrics.totalDataFiles = metrics.addedDataFiles;
@@ -405,7 +406,7 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                 computeSnapshotSummary(
                         IcebergSnapshotSummary.APPEND.operation(), paimonSnapshot, metrics);
 
-        RowLineage rowLineage = computeRowLineage(0L, metrics.addedRecords);
+        RowLineage rowLineage = computeRowLineage(0L, assignedNextRowId);
         IcebergSnapshot snapshot =
                 new IcebergSnapshot(
                         snapshotId,
@@ -696,12 +697,12 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
         // compact data manifest file if needed
         newDataManifestFileMetas = compactMetadataIfNeeded(newDataManifestFileMetas, snapshotId);
 
-        String manifestListFileName =
-                manifestList.writeWithoutRolling(
-                        Stream.concat(
-                                        newDataManifestFileMetas.stream(),
-                                        newDVManifestFileMetas.stream())
-                                .collect(Collectors.toList()));
+        List<IcebergManifestFileMeta> allManifestFileMetas =
+                Stream.concat(newDataManifestFileMetas.stream(), newDVManifestFileMetas.stream())
+                        .collect(Collectors.toList());
+        long baseNextRowId = baseMetadata.nextRowId() == null ? 0L : baseMetadata.nextRowId();
+        long assignedNextRowId = assignFirstRowIds(allManifestFileMetas, baseNextRowId);
+        String manifestListFileName = manifestList.writeWithoutRolling(allManifestFileMetas);
 
         SummaryMetrics metrics = new SummaryMetrics();
         metrics.addedDataFiles = addedFiles.size();
@@ -774,10 +775,7 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                             .collect(Collectors.toList()));
         }
 
-        RowLineage rowLineage =
-                computeRowLineage(
-                        baseMetadata.nextRowId() == null ? 0L : baseMetadata.nextRowId(),
-                        metrics.addedRecords);
+        RowLineage rowLineage = computeRowLineage(baseNextRowId, assignedNextRowId);
 
         List<IcebergSnapshot> snapshots = new ArrayList<>(baseMetadata.snapshots());
         snapshots.add(
@@ -1580,18 +1578,50 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
 
     /**
      * Row-lineage bookkeeping for a new snapshot, mandatory in Iceberg format version 3: the
-     * snapshot's first-row-id starts at the base metadata's next-row-id watermark and the table's
-     * next-row-id advances by the snapshot's added records. For format version 2 all fields stay
-     * null so nothing is written.
+     * snapshot's first-row-id starts at the base metadata's next-row-id watermark, added-rows is
+     * the id space assigned by {@link #assignFirstRowIds} (the spec's "upper bound of the number of
+     * rows with assigned row IDs", which may include existing rows in rewritten manifests) and the
+     * table's next-row-id advances to the watermark reached by the assignment. For format version 2
+     * all fields stay null so nothing is written.
      */
-    private RowLineage computeRowLineage(long baseNextRowId, long addedRecords) {
+    private RowLineage computeRowLineage(long baseNextRowId, long assignedNextRowId) {
         RowLineage lineage = new RowLineage();
         if (formatVersion >= IcebergMetadata.FORMAT_VERSION_V3) {
             lineage.firstRowId = baseNextRowId;
-            lineage.addedRows = addedRecords;
-            lineage.nextRowId = baseNextRowId + addedRecords;
+            lineage.addedRows = assignedNextRowId - baseNextRowId;
+            lineage.nextRowId = assignedNextRowId;
         }
         return lineage;
+    }
+
+    /**
+     * Iceberg format version 3 requires every data manifest in a manifest list to carry a <code>
+     * first_row_id</code> (field 520): readers derive row IDs of data files without an explicit id
+     * range from it via inheritance, and e.g. Snowflake rejects v3 snapshots whose manifest list
+     * has null values. Manifests that already carry an id range (carried over from the base
+     * snapshot) keep it; new or rewritten data manifests are assigned the current next-row-id
+     * watermark, which then advances by the manifest's added + existing row counts to account for
+     * every data file that will inherit an id range at read time (see the "First Row ID Assignment"
+     * section of the Iceberg spec). Delete manifests always stay null.
+     *
+     * <p>Entries are replaced in place; returns the new next-row-id watermark. No-op for format
+     * version 2.
+     */
+    private long assignFirstRowIds(List<IcebergManifestFileMeta> metas, long baseNextRowId) {
+        long nextRowId = baseNextRowId;
+        if (formatVersion < IcebergMetadata.FORMAT_VERSION_V3) {
+            return nextRowId;
+        }
+        for (int i = 0; i < metas.size(); i++) {
+            IcebergManifestFileMeta meta = metas.get(i);
+            if (meta.content() != IcebergManifestFileMeta.Content.DATA
+                    || meta.firstRowId() != null) {
+                continue;
+            }
+            metas.set(i, meta.withFirstRowId(nextRowId));
+            nextRowId += meta.addedRowsCount() + meta.existingRowsCount();
+        }
+        return nextRowId;
     }
 
     private static class RowLineage {
