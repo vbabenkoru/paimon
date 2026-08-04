@@ -24,7 +24,7 @@
     <parent>
         <artifactId>paimon-filesystems</artifactId>
         <groupId>org.apache.paimon</groupId>
-        <version>2.0.0-rc2-nextrowid.2</version>
+        <version>2.0.0-rc2-nextrowid.3</version>
     </parent>
 
     <artifactId>paimon-s3-impl</artifactId>

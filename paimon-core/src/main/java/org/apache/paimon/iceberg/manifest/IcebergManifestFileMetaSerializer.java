@@ -35,49 +35,60 @@ public class IcebergManifestFileMetaSerializer extends ObjectSerializer<IcebergM
 
     private static final long serialVersionUID = 1L;
 
-    private static final String FIRST_ROW_ID_FIELD = "first_row_id";
-
     private final IcebergPartitionSummarySerializer partitionSummarySerializer;
-    // The legacy (Iceberg 1.4 / Athena) manifest list schema has no first_row_id column, so the
-    // serializer must follow the schema it was created with.
-    private final boolean hasFirstRowId;
+    private final boolean withFirstRowId;
 
     public IcebergManifestFileMetaSerializer(RowType schema) {
         super(schema);
         this.partitionSummarySerializer = new IcebergPartitionSummarySerializer();
-        this.hasFirstRowId = schema.getFieldNames().contains(FIRST_ROW_ID_FIELD);
+        // IcebergManifestFileMeta.schema(...) always has 14 base fields (see
+        // schemaForIcebergNew/schemaForIceberg1_4) and appends exactly one extra field,
+        // first_row_id (520), when withFirstRowId=true (see schema(boolean, boolean)); so a
+        // field count of 15 unambiguously means the row-lineage column is present.
+        this.withFirstRowId = schema.getFieldCount() == 15;
     }
 
     @Override
     public InternalRow toRow(IcebergManifestFileMeta file) {
-        GenericRow row =
-                GenericRow.of(
-                        BinaryString.fromString(file.manifestPath()),
-                        file.manifestLength(),
-                        file.partitionSpecId(),
-                        file.content().id(),
-                        file.sequenceNumber(),
-                        file.minSequenceNumber(),
-                        file.addedSnapshotId(),
-                        file.addedFilesCount(),
-                        file.existingFilesCount(),
-                        file.deletedFilesCount(),
-                        file.addedRowsCount(),
-                        file.existingRowsCount(),
-                        file.deletedRowsCount(),
-                        new GenericArray(
-                                file.partitions().stream()
-                                        .map(partitionSummarySerializer::toRow)
-                                        .toArray(InternalRow[]::new)));
-        if (!hasFirstRowId) {
-            return row;
+        if (withFirstRowId) {
+            return GenericRow.of(
+                    BinaryString.fromString(file.manifestPath()),
+                    file.manifestLength(),
+                    file.partitionSpecId(),
+                    file.content().id(),
+                    file.sequenceNumber(),
+                    file.minSequenceNumber(),
+                    file.addedSnapshotId(),
+                    file.addedFilesCount(),
+                    file.existingFilesCount(),
+                    file.deletedFilesCount(),
+                    file.addedRowsCount(),
+                    file.existingRowsCount(),
+                    file.deletedRowsCount(),
+                    new GenericArray(
+                            file.partitions().stream()
+                                    .map(partitionSummarySerializer::toRow)
+                                    .toArray(InternalRow[]::new)),
+                    file.firstRowId());
         }
-        GenericRow rowWithFirstRowId = new GenericRow(row.getFieldCount() + 1);
-        for (int i = 0; i < row.getFieldCount(); i++) {
-            rowWithFirstRowId.setField(i, row.getField(i));
-        }
-        rowWithFirstRowId.setField(row.getFieldCount(), file.firstRowId());
-        return rowWithFirstRowId;
+        return GenericRow.of(
+                BinaryString.fromString(file.manifestPath()),
+                file.manifestLength(),
+                file.partitionSpecId(),
+                file.content().id(),
+                file.sequenceNumber(),
+                file.minSequenceNumber(),
+                file.addedSnapshotId(),
+                file.addedFilesCount(),
+                file.existingFilesCount(),
+                file.deletedFilesCount(),
+                file.addedRowsCount(),
+                file.existingRowsCount(),
+                file.deletedRowsCount(),
+                new GenericArray(
+                        file.partitions().stream()
+                                .map(partitionSummarySerializer::toRow)
+                                .toArray(InternalRow[]::new)));
     }
 
     @Override
@@ -97,7 +108,7 @@ public class IcebergManifestFileMetaSerializer extends ObjectSerializer<IcebergM
                 row.getLong(11),
                 row.getLong(12),
                 toPartitionSummaries(row.getArray(13)),
-                hasFirstRowId && !row.isNullAt(14) ? row.getLong(14) : null);
+                withFirstRowId && !row.isNullAt(14) ? row.getLong(14) : null);
     }
 
     private List<IcebergPartitionSummary> toPartitionSummaries(InternalArray array) {

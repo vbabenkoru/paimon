@@ -376,7 +376,6 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
         List<IcebergManifestFileMeta> allManifestFileMetas = new ArrayList<>();
         allManifestFileMetas.addAll(dataManifestFileMetas);
         allManifestFileMetas.addAll(dvManifestFileMetas);
-        long assignedNextRowId = assignFirstRowIds(allManifestFileMetas, 0L);
 
         metrics.changedPartitionCount = changedPartitions.size();
         metrics.totalDataFiles = metrics.addedDataFiles;
@@ -395,6 +394,15 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
         metrics.totalPositionDeletes = totalPositionDeleteRecords;
         metrics.totalEqualityDeletes = 0;
 
+        Long snapshotFirstRowId = computeSnapshotFirstRowId(0L);
+        ManifestRowIdAssignment rowIdAssignment =
+                assignManifestFirstRowIds(allManifestFileMetas, snapshotFirstRowId);
+        allManifestFileMetas = rowIdAssignment.manifests;
+        Long addedRows = snapshotFirstRowId == null ? null : rowIdAssignment.assignedRows;
+        Long nextRowId =
+                snapshotFirstRowId == null
+                        ? null
+                        : snapshotFirstRowId + rowIdAssignment.assignedRows;
         String manifestListFileName = manifestList.writeWithoutRolling(allManifestFileMetas);
 
         int schemaId = (int) schemaCache.getLatestSchemaId();
@@ -406,7 +414,6 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                 computeSnapshotSummary(
                         IcebergSnapshotSummary.APPEND.operation(), paimonSnapshot, metrics);
 
-        RowLineage rowLineage = computeRowLineage(0L, assignedNextRowId);
         IcebergSnapshot snapshot =
                 new IcebergSnapshot(
                         snapshotId,
@@ -416,8 +423,8 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                         snapshotSummary,
                         pathFactory.toManifestListPath(manifestListFileName).toString(),
                         schemaId,
-                        rowLineage.firstRowId,
-                        rowLineage.addedRows);
+                        snapshotFirstRowId,
+                        addedRows);
 
         // Tags can only be included in Iceberg if they point to an Iceberg snapshot that
         // exists. Otherwise, an Iceberg client fails to parse the metadata and all reads fail.
@@ -451,7 +458,7 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                                         IcebergPartitionField.FIRST_FIELD_ID - 1),
                         Collections.singletonList(snapshot),
                         (int) snapshotId,
-                        rowLineage.nextRowId,
+                        nextRowId,
                         refs);
 
         Path metadataPath = pathFactory.toMetadataPath(snapshotId);
@@ -697,13 +704,6 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
         // compact data manifest file if needed
         newDataManifestFileMetas = compactMetadataIfNeeded(newDataManifestFileMetas, snapshotId);
 
-        List<IcebergManifestFileMeta> allManifestFileMetas =
-                Stream.concat(newDataManifestFileMetas.stream(), newDVManifestFileMetas.stream())
-                        .collect(Collectors.toList());
-        long baseNextRowId = baseMetadata.nextRowId() == null ? 0L : baseMetadata.nextRowId();
-        long assignedNextRowId = assignFirstRowIds(allManifestFileMetas, baseNextRowId);
-        String manifestListFileName = manifestList.writeWithoutRolling(allManifestFileMetas);
-
         SummaryMetrics metrics = new SummaryMetrics();
         metrics.addedDataFiles = addedFiles.size();
         metrics.addedRecords =
@@ -754,6 +754,26 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
         metrics.totalPositionDeletes = computeLiveRowCount(newDVManifestFileMetas);
         metrics.totalEqualityDeletes = 0;
 
+        Long snapshotFirstRowId =
+                computeSnapshotFirstRowId(
+                        baseMetadata.nextRowId() == null ? 0L : baseMetadata.nextRowId());
+
+        ManifestRowIdAssignment rowIdAssignment =
+                assignManifestFirstRowIds(
+                        Stream.concat(
+                                        newDataManifestFileMetas.stream(),
+                                        newDVManifestFileMetas.stream())
+                                .collect(Collectors.toList()),
+                        snapshotFirstRowId);
+        List<IcebergManifestFileMeta> newManifestFileMetasWithRowIds = rowIdAssignment.manifests;
+        Long addedRows = snapshotFirstRowId == null ? null : rowIdAssignment.assignedRows;
+        Long nextRowId =
+                snapshotFirstRowId == null
+                        ? null
+                        : snapshotFirstRowId + rowIdAssignment.assignedRows;
+        String manifestListFileName =
+                manifestList.writeWithoutRolling(newManifestFileMetasWithRowIds);
+
         IcebergSnapshotSummary snapshotSummary =
                 computeSnapshotSummary(operation, snapshot, metrics);
 
@@ -775,8 +795,6 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                             .collect(Collectors.toList()));
         }
 
-        RowLineage rowLineage = computeRowLineage(baseNextRowId, assignedNextRowId);
-
         List<IcebergSnapshot> snapshots = new ArrayList<>(baseMetadata.snapshots());
         snapshots.add(
                 new IcebergSnapshot(
@@ -787,8 +805,8 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                         snapshotSummary,
                         pathFactory.toManifestListPath(manifestListFileName).toString(),
                         schemaId,
-                        rowLineage.firstRowId,
-                        rowLineage.addedRows));
+                        snapshotFirstRowId,
+                        addedRows));
 
         // all snapshots in this list, except the last one, need to expire
         List<IcebergSnapshot> toExpireExceptLast = new ArrayList<>();
@@ -827,7 +845,7 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                         baseMetadata.lastPartitionId(),
                         snapshots,
                         (int) snapshotId,
-                        rowLineage.nextRowId,
+                        nextRowId,
                         refs);
 
         Path metadataPath = pathFactory.toMetadataPath(snapshotId);
@@ -1023,8 +1041,10 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
                             commitKind == Snapshot.CommitKind.COMPACT
                                     ? IcebergSnapshotSummary.REPLACE.operation()
                                     : IcebergSnapshotSummary.OVERWRITE.operation();
+                    List<IcebergManifestEntry> sourceEntries =
+                            materializeFirstRowIds(fileMeta, entries);
                     List<IcebergManifestEntry> newEntries = new ArrayList<>();
-                    for (IcebergManifestEntry entry : entries) {
+                    for (IcebergManifestEntry entry : sourceEntries) {
                         if (entry.isLive()) {
                             boolean removed = removedFiles.containsKey(entry.file().filePath());
                             newEntries.add(
@@ -1086,10 +1106,13 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
 
         Function<IcebergManifestFileMeta, List<IcebergManifestEntry>> processor =
                 meta -> {
+                    List<IcebergManifestEntry> sourceEntries =
+                            materializeFirstRowIds(
+                                    meta,
+                                    IcebergManifestFile.create(table, pathFactory)
+                                            .read(new Path(meta.manifestPath()).getName()));
                     List<IcebergManifestEntry> entries = new ArrayList<>();
-                    for (IcebergManifestEntry entry :
-                            IcebergManifestFile.create(table, pathFactory)
-                                    .read(new Path(meta.manifestPath()).getName())) {
+                    for (IcebergManifestEntry entry : sourceEntries) {
                         // a deletion made by this commit is recorded against the current
                         // snapshot but keeps the file sequence number of the older snapshot
                         // that added the file, so it has to be recognised by snapshot id
@@ -1578,56 +1601,121 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
 
     /**
      * Row-lineage bookkeeping for a new snapshot, mandatory in Iceberg format version 3: the
-     * snapshot's first-row-id starts at the base metadata's next-row-id watermark, added-rows is
-     * the id space assigned by {@link #assignFirstRowIds} (the spec's "upper bound of the number of
-     * rows with assigned row IDs", which may include existing rows in rewritten manifests) and the
-     * table's next-row-id advances to the watermark reached by the assignment. For format version 2
-     * all fields stay null so nothing is written.
+     * snapshot's first-row-id starts at the base metadata's next-row-id watermark. The snapshot's
+     * added-rows and the table's next-row-id are NOT derived here: they depend on how many rows
+     * {@link #assignManifestFirstRowIds} actually assigns (which can exceed this commit's added
+     * records when a carried-over manifest is assigned for the first time, e.g. a Layer-1-written
+     * manifest being upgraded), so callers must recompute them from the assignment's result. For
+     * format version 2 the field stays null so nothing is written.
      */
-    private RowLineage computeRowLineage(long baseNextRowId, long assignedNextRowId) {
-        RowLineage lineage = new RowLineage();
-        if (formatVersion >= IcebergMetadata.FORMAT_VERSION_V3) {
-            lineage.firstRowId = baseNextRowId;
-            lineage.addedRows = assignedNextRowId - baseNextRowId;
-            lineage.nextRowId = assignedNextRowId;
-        }
-        return lineage;
+    @Nullable
+    private Long computeSnapshotFirstRowId(long baseNextRowId) {
+        return formatVersion >= IcebergMetadata.FORMAT_VERSION_V3 ? baseNextRowId : null;
     }
 
     /**
-     * Iceberg format version 3 requires every data manifest in a manifest list to carry a <code>
-     * first_row_id</code> (field 520): readers derive row IDs of data files without an explicit id
-     * range from it via inheritance, and e.g. Snowflake rejects v3 snapshots whose manifest list
-     * has null values. Manifests that already carry an id range (carried over from the base
-     * snapshot) keep it; new or rewritten data manifests are assigned the current next-row-id
-     * watermark, which then advances by the manifest's added + existing row counts to account for
-     * every data file that will inherit an id range at read time (see the "First Row ID Assignment"
-     * section of the Iceberg spec). Delete manifests always stay null.
-     *
-     * <p>Entries are replaced in place; returns the new next-row-id watermark. No-op for format
-     * version 2.
+     * Result of {@link #assignManifestFirstRowIds}: the manifests with first_row_id assigned, and
+     * the total number of rows actually consumed from the row-id space by that assignment (which
+     * may be larger than this commit's added-records count; see the class-level note there).
      */
-    private long assignFirstRowIds(List<IcebergManifestFileMeta> metas, long baseNextRowId) {
-        long nextRowId = baseNextRowId;
-        if (formatVersion < IcebergMetadata.FORMAT_VERSION_V3) {
-            return nextRowId;
+    private static class ManifestRowIdAssignment {
+        private final List<IcebergManifestFileMeta> manifests;
+        private final long assignedRows;
+
+        private ManifestRowIdAssignment(
+                List<IcebergManifestFileMeta> manifests, long assignedRows) {
+            this.manifests = manifests;
+            this.assignedRows = assignedRows;
         }
-        for (int i = 0; i < metas.size(); i++) {
-            IcebergManifestFileMeta meta = metas.get(i);
-            if (meta.content() != IcebergManifestFileMeta.Content.DATA
-                    || meta.firstRowId() != null) {
-                continue;
-            }
-            metas.set(i, meta.withFirstRowId(nextRowId));
-            nextRowId += meta.addedRowsCount() + meta.existingRowsCount();
-        }
-        return nextRowId;
     }
 
-    private static class RowLineage {
-        @Nullable private Long firstRowId;
-        @Nullable private Long addedRows;
-        @Nullable private Long nextRowId;
+    /**
+     * Iceberg v3: assign first_row_id (field 520) to data manifests that do not have one yet.
+     * Manifests carried over from base metadata that are already assigned keep their value; delete
+     * manifests stay null. The watermark starts at the snapshot's first-row-id and advances by each
+     * newly-assigned manifest's TRUE inheriting-rows count (see {@link #trueInheritingRowsCount}),
+     * returned as {@link ManifestRowIdAssignment#assignedRows}.
+     *
+     * <p>A manifest written entirely by Layer 2 (this commit or a later one) satisfies "null-142
+     * rows == ADDED rows", so {@code addedRowsCount()} is exact for it. But a manifest carried over
+     * from before manifest-level assignment existed (a "Layer-1" manifest) may reach here
+     * unassigned with existing/deleted entries whose per-file field 142 is also still null; for
+     * those, {@code addedRowsCount()} alone would undercount the rows this assignment must cover,
+     * silently shrinking the range handed out and colliding with the next commit's ids. Callers
+     * MUST use {@code assignedRows} (not this commit's added-records count) to advance the
+     * snapshot's added-rows / table next-row-id, precisely because of that mismatch.
+     */
+    private ManifestRowIdAssignment assignManifestFirstRowIds(
+            List<IcebergManifestFileMeta> manifests, @Nullable Long snapshotFirstRowId) {
+        if (snapshotFirstRowId == null) {
+            return new ManifestRowIdAssignment(manifests, 0L);
+        }
+        List<IcebergManifestFileMeta> result = new ArrayList<>();
+        long watermark = snapshotFirstRowId;
+        for (IcebergManifestFileMeta meta : manifests) {
+            if (meta.content() == IcebergManifestFileMeta.Content.DATA
+                    && meta.firstRowId() == null) {
+                result.add(meta.withFirstRowId(watermark));
+                watermark += trueInheritingRowsCount(meta);
+            } else {
+                result.add(meta);
+            }
+        }
+        return new ManifestRowIdAssignment(result, watermark - snapshotFirstRowId);
+    }
+
+    /**
+     * The true number of rows an unassigned manifest needs from the row-id space: the sum of {@code
+     * recordCount()} over entries whose per-file first_row_id (field 142) is null.
+     *
+     * <p>Fast path: when the manifest has no existing/deleted entries ({@code existingFilesCount()
+     * + deletedFilesCount() == 0}), every entry is ADDED and, by the Layer-2 invariant, has a null
+     * field 142, so {@code addedRowsCount()} already equals this sum without having to read the
+     * manifest file.
+     *
+     * <p>Otherwise (a manifest that may carry Layer-1-era existing/deleted entries whose field 142
+     * was never materialized) the manifest is actually read and entries are inspected one by one,
+     * since {@code addedRowsCount()} alone would not include those entries' rows.
+     */
+    private long trueInheritingRowsCount(IcebergManifestFileMeta meta) {
+        if (meta.existingFilesCount() + meta.deletedFilesCount() == 0) {
+            return meta.addedRowsCount();
+        }
+        long sum = 0;
+        for (IcebergManifestEntry entry :
+                manifestFile.read(new Path(meta.manifestPath()).getName())) {
+            if (entry.file().firstRowId() == null) {
+                sum += entry.file().recordCount();
+            }
+        }
+        return sum;
+    }
+
+    /**
+     * Iceberg v3 requires the inherited first_row_id to be written into file metadata when entries
+     * are copied into a rewritten manifest. Computes each entry's effective id in base manifest
+     * order (explicit field 142, or inherited from the manifest's first_row_id) and returns entries
+     * with the id materialized. No-op for delete manifests and for base manifests without an
+     * assigned first_row_id (v2 metadata, or v3 metadata written before manifest-level assignment
+     * existed — those stay in the spec's upgraded-table state).
+     */
+    private static List<IcebergManifestEntry> materializeFirstRowIds(
+            IcebergManifestFileMeta baseMeta, List<IcebergManifestEntry> entries) {
+        if (baseMeta.content() != IcebergManifestFileMeta.Content.DATA
+                || baseMeta.firstRowId() == null) {
+            return entries;
+        }
+        List<IcebergManifestEntry> result = new ArrayList<>();
+        long watermark = baseMeta.firstRowId();
+        for (IcebergManifestEntry entry : entries) {
+            if (entry.file().firstRowId() == null) {
+                result.add(entry.withFile(entry.file().withFirstRowId(watermark)));
+                watermark += entry.file().recordCount();
+            } else {
+                result.add(entry);
+            }
+        }
+        return result;
     }
 
     private class SchemaCache {
