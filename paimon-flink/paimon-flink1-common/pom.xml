@@ -24,7 +24,7 @@ under the License.
     <parent>
         <groupId>org.apache.paimon</groupId>
         <artifactId>paimon-flink</artifactId>
-        <version>2.1.0-main-nextrowid.6</version>
+        <version>2.1.0-main-nextrowid.7</version>
     </parent>
 
     <packaging>jar</packaging>
