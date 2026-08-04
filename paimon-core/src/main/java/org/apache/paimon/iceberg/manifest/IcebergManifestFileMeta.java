@@ -75,43 +75,7 @@ public class IcebergManifestFileMeta {
     private final long existingRowsCount;
     private final long deletedRowsCount;
     private final List<IcebergPartitionSummary> partitions;
-    // Iceberg format version 3 row lineage: the starting _row_id assigned to rows in this data
-    // manifest, see https://iceberg.apache.org/spec/#first-row-id-assignment. Null for delete
-    // manifests, for format version <= 2, and for data manifests not yet assigned an id range.
     @Nullable private final Long firstRowId;
-
-    public IcebergManifestFileMeta(
-            String manifestPath,
-            long manifestLength,
-            int partitionSpecId,
-            Content content,
-            long sequenceNumber,
-            long minSequenceNumber,
-            long addedSnapshotId,
-            int addedFilesCount,
-            int existingFilesCount,
-            int deletedFilesCount,
-            long addedRowsCount,
-            long existingRowsCount,
-            long deletedRowsCount,
-            List<IcebergPartitionSummary> partitions) {
-        this(
-                manifestPath,
-                manifestLength,
-                partitionSpecId,
-                content,
-                sequenceNumber,
-                minSequenceNumber,
-                addedSnapshotId,
-                addedFilesCount,
-                existingFilesCount,
-                deletedFilesCount,
-                addedRowsCount,
-                existingRowsCount,
-                deletedRowsCount,
-                partitions,
-                null);
-    }
 
     public IcebergManifestFileMeta(
             String manifestPath,
@@ -144,26 +108,6 @@ public class IcebergManifestFileMeta {
         this.deletedRowsCount = deletedRowsCount;
         this.partitions = partitions;
         this.firstRowId = firstRowId;
-    }
-
-    /** Returns a copy of this meta with the given {@code first_row_id} assigned. */
-    public IcebergManifestFileMeta withFirstRowId(@Nullable Long firstRowId) {
-        return new IcebergManifestFileMeta(
-                manifestPath,
-                manifestLength,
-                partitionSpecId,
-                content,
-                sequenceNumber,
-                minSequenceNumber,
-                addedSnapshotId,
-                addedFilesCount,
-                existingFilesCount,
-                deletedFilesCount,
-                addedRowsCount,
-                existingRowsCount,
-                deletedRowsCount,
-                partitions,
-                firstRowId);
     }
 
     public String manifestPath() {
@@ -231,8 +175,37 @@ public class IcebergManifestFileMeta {
         return firstRowId;
     }
 
+    public IcebergManifestFileMeta withFirstRowId(long firstRowId) {
+        return new IcebergManifestFileMeta(
+                manifestPath,
+                manifestLength,
+                partitionSpecId,
+                content,
+                sequenceNumber,
+                minSequenceNumber,
+                addedSnapshotId,
+                addedFilesCount,
+                existingFilesCount,
+                deletedFilesCount,
+                addedRowsCount,
+                existingRowsCount,
+                deletedRowsCount,
+                partitions,
+                firstRowId);
+    }
+
     public static RowType schema(boolean legacyVersion) {
-        return legacyVersion ? schemaForIceberg1_4() : schemaForIcebergNew();
+        return schema(legacyVersion, false);
+    }
+
+    public static RowType schema(boolean legacyVersion, boolean withFirstRowId) {
+        RowType base = legacyVersion ? schemaForIceberg1_4() : schemaForIcebergNew();
+        if (!withFirstRowId) {
+            return base;
+        }
+        List<DataField> fields = new ArrayList<>(base.getFields());
+        fields.add(new DataField(520, "first_row_id", DataTypes.BIGINT()));
+        return new RowType(false, fields);
     }
 
     private static RowType schemaForIcebergNew() {
@@ -253,7 +226,6 @@ public class IcebergManifestFileMeta {
         fields.add(
                 new DataField(
                         507, "partitions", DataTypes.ARRAY(IcebergPartitionSummary.schema())));
-        fields.add(new DataField(520, "first_row_id", DataTypes.BIGINT()));
         return new RowType(false, fields);
     }
 

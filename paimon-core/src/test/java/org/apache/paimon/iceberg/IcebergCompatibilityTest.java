@@ -1575,8 +1575,7 @@ public class IcebergCompatibilityTest {
         Map<String, Integer> manifestListFieldIdsMap =
                 parseAvroSchemaFieldIds(manifestListLocation);
         assertThat(manifestListFieldIdsMap)
-                .hasSize(20)
-                .containsEntry("manifest_file:first_row_id", 520)
+                .hasSize(19)
                 .containsEntry("manifest_file:r508:contains_null", 509)
                 .containsEntry("manifest_file:r508:contains_nan", 518)
                 .containsEntry("manifest_file:added_snapshot_id", 503)
