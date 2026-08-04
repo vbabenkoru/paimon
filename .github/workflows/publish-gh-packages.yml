@@ -37,12 +37,15 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
-      # JDK 11: required by the flink2 profile (target.java.version=11) and
-      # auto-activates the paimon-iceberg module profile.
-      - name: Set up JDK 11
+      # JDK 17: Iceberg 1.11 ships Java-17 class files (major 61), which a
+      # JDK 11 javac cannot read when compiling paimon-iceberg. The flink2
+      # profile's target.java.version=11 still emits 11-compatible bytecode
+      # for the paimon modules; the paimon-iceberg profile is passed
+      # explicitly below.
+      - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
-          java-version: 11
+          java-version: 17
           distribution: 'temurin'
       - name: Cache local Maven repository
         uses: actions/cache@v5
