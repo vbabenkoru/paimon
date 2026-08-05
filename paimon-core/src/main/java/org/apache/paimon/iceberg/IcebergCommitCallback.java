@@ -307,6 +307,11 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
             }
 
             if (table.fileIO().exists(pathFactory.toMetadataPath(snapshotId))) {
+                // The metadata file only proves the metadata was generated, not that it reached
+                // the external catalog: a previous attempt may have failed between writing the
+                // file and the catalog commit (e.g. an ambiguous REST catalog error). Re-publish
+                // idempotently; the committer no-ops when the catalog already has this snapshot.
+                republishExistingMetadata(snapshotId);
                 return;
             }
 
@@ -330,6 +335,45 @@ public class IcebergCommitCallback implements CommitCallback, TagCallback {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /**
+     * Re-run the external catalog publication for metadata that was already generated. Only the
+     * REST committer is re-driven: its publication can fail or finish ambiguously after the local
+     * metadata file became durable, and it dedupes against the live catalog state, so re-publishing
+     * is idempotent.
+     */
+    private void republishExistingMetadata(long snapshotId) {
+        if (metadataCommitter == null || !"rest".equals(metadataCommitter.identifier())) {
+            return;
+        }
+        IcebergMetadata metadata;
+        try {
+            metadata =
+                    IcebergMetadata.fromPath(
+                            table.fileIO(), pathFactory.toMetadataPath(snapshotId));
+        } catch (Exception e) {
+            LOG.warn(
+                    "Existing Iceberg metadata for snapshot {} is unreadable, skipping "
+                            + "re-publication to the external catalog.",
+                    snapshotId,
+                    e);
+            return;
+        }
+        IcebergMetadata baseMetadata = null;
+        try {
+            Path baseMetadataPath = pathFactory.toMetadataPath(snapshotId - 1);
+            if (table.fileIO().exists(baseMetadataPath)) {
+                baseMetadata = IcebergMetadata.fromPath(table.fileIO(), baseMetadataPath);
+            }
+        } catch (Exception e) {
+            LOG.warn(
+                    "Failed to read base Iceberg metadata for snapshot {}, re-publishing without "
+                            + "base.",
+                    snapshotId,
+                    e);
+        }
+        metadataCommitter.commitMetadata(metadata, baseMetadata);
     }
 
     /**
